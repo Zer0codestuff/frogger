@@ -1,0 +1,576 @@
+
+
+    Introduction
+
+    What is ncurses: A free software (MIT-style license used by ncurses; per HOWTO revision notes) implementation of curses that runs on many UNIX-like systems. It abstracts terminal control into a higher-level API so applications can use windows, colors, attributes, and input devices without manually emitting escape codes.
+    Typical use cases:
+        Full-screen text UIs with multiple windows/panes
+        Dialog-like interfaces, menus, forms
+        Games and puzzles (e.g., Life, Hanoi, etc.)
+        Text-mode dashboards with color highlighting and keyboard/mouse interaction
+    Where to get it: The HOWTO includes pointers on obtaining ncurses and references; consult the HOWTO’s “Where to get it” section for distribution sources and versions.
+    About examples: The HOWTO includes small example programs illustrating each API concept (printing, scanning, windows, borders, colors, keyboard, mouse, panels, menus, forms, etc.). This manual consolidates the conceptual lessons and API usage shown there.
+
+    Hello World and Compilation Hello World in ncurses follows a very specific pattern:
+
+    Initialize curses
+    Draw content
+    Refresh the screen
+    Wait for user input
+    End curses mode and return to normal terminal
+
+Example: minimal pattern
+
+    Core sequence:
+        initscr()
+        printw("Hello World"); refresh()
+        getch()
+        endwin()
+
+Compilation notes (as described in the HOWTO):
+
+    Link against ncurses:
+        gcc hello.c -o hello -lncurses
+    When using sister libraries, add them explicitly:
+        Panel: -lpanel
+        Menu: -lmenu
+        Form: -lform
+    Combine as needed, for example:
+        gcc app.c -o app -lform -lmenu -lpanel -lncurses
+    Build-from-source notes and “other formats” are mentioned in the HOWTO’s revision history and sections about building and formats.
+
+    The Gory Details (mental model)
+
+    ncurses abstracts terminal I/O via windows and a virtual screen. You write to windows using functions like addch/addstr/printw and then “paint” changes to the terminal with refresh/wrefresh.
+    A default window stdscr is created by initscr(). You can create additional windows and subwindows for layout and modular rendering.
+    Input is taken through getch/getstr/scanw-like calls, which can be configured via cbreak/raw/noecho/keypad/halfdelay.
+    Many API families have window-specific variants prefixed with w (operates on a given WINDOW*), and coordinate-moving variants prefixed with mv (move cursor first), and combined mvw (move within a specific window).
+
+    Initialization 4.1 Initialization functions
+
+    initscr(): Initialize curses mode, create stdscr and related internal structures.
+    endwin(): Restore terminal to normal mode; every program should call this before exiting.
+    newterm()/setupterm(): Advanced/alternative initialization for specific terminals (the HOWTO centers on initscr()).
+
+4.2 raw() and cbreak()
+
+    raw(): Passes all input to the program without line buffering; Control characters (like Ctrl-C) are reported as input to the program rather than generating signals.
+    cbreak(): Disables line buffering but still allows some terminal processing of special characters. It’s the usual default for interactive UIs.
+    nocbreak(): Return to line-buffered mode.
+    Caveat: In raw mode, you must handle interrupts and flow-control keys yourself. In cbreak mode, use keypad() for function/arrow keys and remember to pair with noecho() for a typical TUI.
+
+4.3 echo() and noecho()
+
+    echo(): User-typed characters are echoed to the screen automatically.
+    noecho(): Supresses automatic echoing; typically used with getch/getstr to control how and when you show typed input.
+    Usual practice: noecho() with cbreak() for application-driven input display (e.g., password entry or custom prompt rendering).
+
+4.4 keypad()
+
+    keypad(win, TRUE|FALSE): Enables special-key processing on a window. When TRUE, function keys (F1..F10), arrows, home/end, etc., are returned as KEY_ constants (e.g., KEY_LEFT).
+    Always enable keypad(stdscr, TRUE) or keypad(window, TRUE) if your app uses special keys.
+
+4.5 halfdelay()
+
+    halfdelay(tenths): Sets an input mode that waits up to tenths of a second for input, then returns ERR on timeout. It’s a simple timing alternative to full nodelay/timeouts. Useful for periodic screen updates without blocking indefinitely.
+
+4.6 Miscellaneous initialization functions
+
+    The HOWTO refers to additional setup helpers (e.g., toggling modes and features) beyond raw/cbreak/echo/noecho/keypad/halfdelay. Use them to tweak input behavior and screen/cursor behavior depending on your UX requirements.
+
+4.7 Example
+
+    A typical initialization block in examples:
+        initscr(); cbreak(); noecho(); keypad(stdscr, TRUE);
+        Optionally halfdelay() if you want timeouts.
+        At the end: endwin();
+
+    A Word About Windows
+
+    stdscr: The default main window representing the whole screen. Most simple apps can draw on stdscr directly.
+    WINDOW structures: You can create separate windows to divide the screen, isolate input regions, or render modal dialogs.
+    Windows vs. subwindows: Subwindows share memory with their parent; drawing in a subwindow affects overlapping regions. Standalone windows are independent buffers.
+
+    Output Functions 6.1 addch() class
+
+    addch(ch): Add a single character at the current cursor position in stdscr and advance the cursor.
+    waddch(win, ch): Same, but for a specific window.
+    mvaddch(y, x, ch): Move cursor then add.
+    mvwaddch(win, y, x, ch): Move within window, then add.
+
+6.2 mvaddch(), waddch(), mvwaddch()
+
+    The general pattern: function families exist for stdscr (no prefix), window-specific (w prefix), and move-then-operate (mv or mvw prefix).
+    Best practice: Use window-specific versions if you’re managing multiple windows. Use mv/mvw variants when you need precise placement in a single call.
+
+6.3 printw() class
+
+    printw(fmt, ...): printf-like, writes formatted text to stdscr.
+    wprintw(win, fmt, ...), mvprintw(...), mvwprintw(...): Window and coordinate variants.
+    Note: printw is convenient for formatted output; ensure your attributes/colors are set appropriately before printing.
+
+6.4 addstr() class
+
+    addstr(const char* s): Efficiently write a C string to stdscr at the current position.
+    waddstr(win, s), mvaddstr(y, x, s), mvwaddstr(win, y, x, s): Variants as above.
+    Useful for dumping preformatted text blocks.
+
+6.5 A word of caution
+
+    Don’t mix curses output with stdio direct terminal writes (e.g., printf to stdout) while in curses mode. Use printw/addstr and refresh/wrefresh to keep the curses virtual screen and physical terminal in sync.
+
+    Input Functions 7.1 getch() class
+
+    getch(): Reads a key from stdscr; if keypad() is enabled, arrow/function keys come back as KEY_* constants.
+    wgetch(win), mvgetch(y, x), mvwgetch(win, y, x): Window and coordinate variants.
+    Combine with noecho() for controlled rendering of typed keys.
+
+7.2 scanw() class
+
+    scanw(fmt, ...): scanf-like input read from stdscr. Use carefully, as formatted input parsing can be brittle.
+    wscanw(win, ...), mvscanw(...), mvwscanw(...): Variants for windows and coordinates.
+    Practical tip: For robust input handling, some programs prefer getstr() + custom parsing to handle backspaces, limits, and validation.
+
+7.3 getstr() class
+
+    getstr(char* buf): Read a string from stdscr into buf; can be dangerous without bounds checking.
+    wgetstr(win, buf), mvgetstr(y, x, buf), mvwgetstr(win, y, x, buf): Variants.
+    Best practice: Ensure buffer sizes and consider a safer pattern (e.g., using wgetnstr if available in your environment) while the HOWTO focuses on the basic getstr family.
+
+7.4 Examples
+
+    The HOWTO includes small examples showing getch() loops that exit on a particular key, scanw/printw pairs, and simple editing with getstr().
+
+    Attributes 8.1 The details
+
+    Attributes change text appearance. Common attributes include:
+        A_BOLD, A_DIM, A_REVERSE, A_STANDOUT, A_UNDERLINE
+    Attributes can be OR’d with characters (or set prior to printing) to affect subsequent output until turned off.
+
+8.2 attron() vs attrset()
+
+    attron(attr): Turns on bits in the current attribute set (additive).
+    attroff(attr): Turns off bits in the current attribute set.
+    attrset(attr): Sets the attribute set exactly to attr (overwrites previous settings).
+    Best practice: Use attron/attroff to toggle individual styles. Use attrset when you want a clean, known set.
+
+8.3 attr_get()
+
+    attr_get(&attrs, &pair, NULL): Obtain current attributes and color pair number so you can preserve/restore or debug current rendering state.
+
+8.4 attr_ functions
+
+    stdscr versions: attron, attroff, attrset, attr_get, attr_set, etc.
+    Use before printw/addstr/addch to affect the characters you’re about to draw.
+
+8.5 wattr functions
+
+    Window-specific analogs: wattron(win, attr), wattroff(win, attr), wattrset(win, attr), wattr_get(win, ...), etc.
+    Prefer window-specific variants when managing multiple windows to keep state localized.
+
+8.6 chgat() functions
+
+    chgat(n, attr, pair, NULL): Change attributes of n characters starting at current position (without rewriting the text).
+    Window variants exist: wchgat(win, ...), mvchgat, mvwchgat.
+    Useful for post-formatting regions (e.g., highlighting selection bars).
+
+    Windows 9.1 The basics
+
+    WINDOW*: Opaque structure representing an in-memory screen region. Drawing into a window modifies its buffer; you apply it to the terminal with wrefresh(win).
+    stdscr is the default window spanning the whole screen; you can create more for layout and layering.
+
+9.2 Let there be a Window!!!
+
+    newwin(height, width, starty, startx): Create a new window.
+    wborder(win, ...)/box(win, vert, horiz): Draw borders around a window.
+    wrefresh(win): Paint the window to the screen.
+    delwin(win): Delete a window when done.
+
+9.3 Explanation
+
+    Coordinate system: Top-left is (0,0). y is row, x is column.
+    When you move the cursor (wmove(win, y, x)) and write, you update that window’s buffer; no terminal I/O happens until refresh/wrefresh is called.
+
+9.4 The other stuff in the example
+
+    Typical examples combine:
+        newwin() → box()/wborder() → keypad(win, TRUE) → mvwprintw() → wrefresh() → wgetch() → delwin()
+    You often keep stdscr for background and overlay smaller windows for dialogs or panes.
+
+9.5 Other Border functions
+
+    box(win, vert, horiz): Simple border with given line-drawing characters (often ACS_VLINE and ACS_HLINE).
+    wborder(win, ls, rs, ts, bs, tl, tr, bl, br): Fully specify border characters; often with ACS_* constants like ACS_ULCORNER, ACS_LRCORNER, etc.
+
+    Colors 10.1 The basics
+
+    start_color(): Must be called after initscr() and before using colors.
+    has_colors(): Check if terminal supports colors before enabling them.
+    init_pair(short pair, short f, short b): Define a color pair number with a foreground and background color.
+    COLOR_PAIR(n): Attribute macro to activate pair n; combine with attron/attroff.
+    Common flow:
+        if (has_colors()) { start_color(); init_pair(1, COLOR_RED, COLOR_BLACK); attron(COLOR_PAIR(1)); ... }
+
+10.2 Changing color definitions
+
+    Some terminals allow redefining the actual RGB content of colors (if can_change_color() is supported).
+    init_color(short color, short r, short g, short b): Redefine a color’s components (0..1000 scale) if the terminal permits.
+
+10.3 Color content
+
+    color_content(short color, short* r, short* g, short* b): Query the current definition of a color.
+    Useful for themes and adapting to terminal capabilities.
+
+    Interfacing with the Keyboard 11.1 The basics
+
+    Use keypad(win, TRUE) to receive function/arrow keys as KEY_* constants.
+    cbreak/noecho are typically used so you can handle each keypress and control display.
+    Common KEY_* constants include KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_NPAGE, KEY_PPAGE, KEY_F(n), KEY_BACKSPACE, etc.
+
+11.2 A simple key usage example
+
+    A standard loop:
+        int ch = getch();
+        switch (ch) { case KEY_LEFT: ...; case 'q': quit; default: ... }
+    Combine with halfdelay() if you need periodic updates while waiting for input.
+
+    Interfacing with the Mouse 12.1 The basics
+
+    KEY_MOUSE: When keypad is enabled, mouse events arrive as KEY_MOUSE; use getmouse() to read event details into an MEVENT structure.
+    mousemask(mmask_t newmask, mmask_t* oldmask): Enable/disable which mouse events you want.
+
+12.2 Getting the events
+
+    After getch() returns KEY_MOUSE, call getmouse(&mevent) to inspect:
+        mevent.x, mevent.y: coordinates
+        mevent.bstate: button state flags (e.g., BUTTON1_PRESSED, etc.)
+
+12.3 Putting it all together
+
+    Enable mousemask for desired events. In your input loop:
+        if (ch == KEY_MOUSE) { if (getmouse(&mevent) == OK) { handle click/drag/position } }
+
+12.4 Miscellaneous functions
+
+    The HOWTO lists additional helpers around mouse event handling and bstate querying; use them to refine which events and buttons your app responds to.
+
+    Screen Manipulation 13.1 getyx() functions
+
+    getyx(win, y, x): Get current cursor position in a window.
+    Variants like getbegyx/getmaxyx: Start position and size of the window, useful for layout and bounds checking.
+
+13.2 Screen dumping
+
+    scr_dump(filename), scr_restore(filename): Save and restore the entire screen state from a file.
+    Useful for snapshotting display and restoring later.
+
+13.3 Window dumping
+
+    putwin(win, FILE*), getwin(FILE*): Serialize/deserialize a single window to/from a file stream.
+    Handy for saving UI state and reconstructing windows later.
+
+    Miscellaneous Features 14.1 curs_set()
+
+    curs_set(visibility): Change cursor visibility (often 0=hidden, 1=normal, 2=highly visible) where supported by the terminal.
+    Common for hiding cursor during animations and showing it during text entry.
+
+14.2 Temporarily leaving curses mode
+
+    A standard pattern:
+        def_prog_mode(); endwin(); // leave curses, restore terminal to cooked mode
+        … run shell commands or use normal stdio …
+        reset_prog_mode(); refresh(); // return to curses mode
+    Useful for launching a pager or performing external operations cleanly.
+
+14.3 ACS variables
+
+    ACS_* symbols map to terminal line-drawing characters. Common ones include:
+        ACS_HLINE, ACS_VLINE
+        ACS_ULCORNER, ACS_URCORNER, ACS_LLCORNER, ACS_LRCORNER
+        ACS_TTEE, ACS_BTEE, ACS_LTEE, ACS_RTEE, ACS_PLUS
+        ACS_DIAMOND, ACS_CKBOARD, ACS_DEGREE, ACS_PLMINUS, ACS_BULLET, etc.
+    Use them with border/box or directly with addch() to render frames and separators consistently across terminals.
+
+    Other Libraries
+
+    The HOWTO briefly indicates additional libraries in the ecosystem. Contextually, ncurses sits alongside sister libraries (panel, menu, form) covered next. “Other libraries” provides situational awareness rather than core APIs.
+
+    Panel Library 16.1 The basics
+
+    Panels are windows with a stacking order (z-order). They allow overlapping windows where top panels obscure parts of lower ones.
+    Core pattern:
+        Create WINDOW* with newwin()
+        Create PANEL* with new_panel(window)
+        Use panel functions to manage stacking, show/hide, move/resize.
+        Call update_panels(); doupdate(); to apply panel stack changes to the screen.
+
+16.2 Compiling with the panels library
+
+    Link with -lpanel in addition to -lncurses.
+
+16.3 Panel window browsing
+
+    Navigate and manage multiple overlapping windows by stacking panels:
+        new_panel(win), top_panel(pan), bottom_panel(pan)
+        update_panels(); doupdate();
+    Use these to implement tabbed UIs, pop-up dialogs, tooltips, or overlapping palettes.
+
+16.4 Using user pointers
+
+    set_panel_userptr(pan, void*), panel_userptr(pan): Attach application-specific data to a panel (e.g., model/view pointers). Useful for event routing and stateful UIs.
+
+16.5 Moving and resizing panels
+
+    move_panel(pan, y, x): Move the panel (and its underlying window) without recreating it.
+    replace_panel(pan, new_win): Replace the panel’s window if you rebuild a layout.
+
+16.6 Hiding and showing panels
+
+    hide_panel(pan), show_panel(pan): Temporarily remove or re-expose a panel while keeping it and its window alive. Perfect for modal dialogs or toggled sidebars.
+
+16.7 panel_above() and panel_below()
+
+    panel_above(pan)/panel_below(pan): Inspect the stack order. Useful in window managers and when implementing “next/previous window” navigation.
+
+    Menu Library 17.1 The basics
+
+    Menus are collections of selectable items. The menu library handles layout, selection, navigation, and scrolling.
+    Core flow:
+        Create ITEM*s with new_item(name, description)
+        Create MENU* with new_menu(items_array)
+        Post/unpost menu to display/hide
+        Use menu_driver() to feed key-requests (arrow keys, page up/down, select) and drive interaction.
+
+17.2 Compiling with the menu library
+
+    Link with -lmenu (and -lncurses). If combined with other sisters, include them all.
+
+17.3 Menu driver: the workhorse
+
+    menu_driver(menu, request): Processes navigation and selection requests. Typical requests:
+        REQ_DOWN_ITEM, REQ_UP_ITEM, REQ_LEFT_ITEM, REQ_RIGHT_ITEM
+        REQ_SCR_DLINE (scroll down one line), REQ_SCR_ULINE (scroll up one line), REQ_SCR_DPAGE, REQ_SCR_UPAGE
+        REQ_TOGGLE_ITEM for multi-valued menus, etc.
+    Map keys (from getch()) to requests and pass into menu_driver().
+
+17.4 Menu windows
+
+    set_menu_win(menu, win): Set the main window.
+    set_menu_sub(menu, subwin): Set the subwindow where items render.
+    This separation is useful for borders, titles, and a clean content area.
+
+17.5 Scrolling menus
+
+    Menus can be larger than the display area; menu_driver supports scrolling requests to move the selection window over the item list.
+
+17.6 Multi-columnar menus
+
+    Configure rows/columns via set_menu_format(menu, rows, cols) to create grids of items.
+
+17.7 Multi-valued menus
+
+    Allow multiple selections with item options and requests (toggle an item). The menu driver and options enable check-list behavior.
+
+17.8 Menu options
+
+    menu_opts_on/off(menu, opts): Toggle features like O_ONEVALUE, O_SHOWDESC, O_ROWMAJOR, etc., to affect behavior and layout.
+
+17.9 The useful user pointer
+
+    set_item_userptr(item, void*): Attach application data to individual items (e.g., callbacks, IDs). Retrieve with item_userptr() during selection handling.
+
+    Forms Library 18.1 The basics
+
+    Forms allow text input across multiple fields with validation, navigation, and display attributes.
+    Core flow:
+        Create FIELDS with new_field(height, width, begin_y, begin_x, offscreen_rows, nbuffers)
+        Create FORM* with new_form(fields_array)
+        Post form to display; drive it with form_driver() using navigation/edit requests.
+
+18.2 Compiling with the forms library
+
+    Link with -lform along with -lncurses.
+
+18.3 Playing with fields
+
+    Fields represent editable or static text areas. You can set:
+        Foreground/background attributes for fields
+        Buffers: set_field_buffer(field, n, string) for initial values or static labels
+        Options: O_VISIBLE, O_ACTIVE, O_PUBLIC, O_EDIT, O_WRAP, etc., to control interaction
+
+18.4 Form windows
+
+    set_form_win(form, win) and set_form_sub(form, subwin) to manage borders, labels, and the data entry area separately.
+
+18.5 Field validation
+
+    set_field_type(field, TYPE_*, …): Apply built-in validators (e.g., alphabetic, integer, numeric, regexp-based) based on the HOWTO’s illustrations.
+    Validation ensures correctness at commit/field-exit time.
+
+18.6 Form driver: the workhorse
+
+    form_driver(form, request): Processes navigation and editing requests, such as:
+        REQ_NEXT_FIELD, REQ_PREV_FIELD, REQ_NEXT_CHAR, REQ_DEL_CHAR, REQ_END_LINE
+        Commit requests and validation checks when leaving a field
+    Typical loop: map getch() keys to driver requests, then refresh display.
+
+    Tools and Widget Libraries 19.1 CDK (Curses Development Kit)
+
+    A higher-level widget set offering ready-made dialogs, calendars, scrolling lists, etc., built on curses. The HOWTO references CDK for speeding up TUI development.
+
+19.2 dialog
+
+    A well-known tool for shell scripts and simple UIs using curses to render message boxes, menu boxes, input boxes, etc. The HOWTO points to dialog as a practical wrapper for common UI patterns.
+
+19.3 Perl Curses Modules CURSES::FORM and CURSES::WIDGETS
+
+    The HOWTO notes Perl bindings/modules and examples for creating widgets/forms in Perl using curses primitives.
+
+    Just For Fun — Example Programs
+
+    The HOWTO includes several educational programs demonstrating real ncurses use. These serve as end-to-end examples of windows, input, and painting:
+        Game of Life: Grid-based animation showing how to update multiple cells, timing with halfdelay or input loops, and repaint cycles.
+        Magic Square: Rendering grids and highlighting, using attributes and input-driven updates.
+        Towers of Hanoi: Moves visualization with simple animation, windows, and status lines.
+        Queens Puzzle: Board rendering, conflict highlighting, and step-by-step solver visualization.
+        Shuffle: Sliding tile puzzle rendering with borders, numeric drawing, and key-driven movement.
+        Typing Tutor: Input capture, per-character feedback, statistics display, and colored indicators.
+
+    References
+
+    The HOWTO includes a references section pointing to upstream documentation and related resources. Use those to go deeper into terminfo, advanced APIs, portability considerations, and widget kits.
+
+Build, Run, and Compose: Practical Patterns
+
+    Baseline C skeleton:
+        Initialize: initscr(); cbreak(); noecho(); keypad(stdscr, TRUE);
+        Optional: if (has_colors()) { start_color(); init_pair(1, COLOR_CYAN, COLOR_BLACK); attron(COLOR_PAIR(1)); }
+        Draw: printw/addstr/mvprintw; Use attributes and colors for emphasis.
+        Refresh: refresh(); or wrefresh(win) for each window you update.
+        Input loop: getch(); switch on keys (including KEY_*). Optionally use halfdelay() for periodic redraws.
+        Shutdown: endwin();
+
+Example: Hello and key loop
+
+    Annotated idea:
+        Initialize curses/modes
+        Display a message
+        Loop on getch: highlight different texts depending on arrows; exit on 'q'
+        Final endwin()
+
+Windowed UI pattern
+
+    Layout: Top status bar (stdscr), central content window, bottom command bar.
+    Use newwin for content; box/wborder for frames.
+    Toggle panels to show pop-up dialogs.
+    Use menu library to implement a selectable menu within the content region.
+    Launch a form for user input.
+    Store per-window data with user pointers (menu/form/panel) for easy event routing.
+
+Attributes and Colors: Best Practices
+
+    Pick a consistent set of color pairs early and document them (pair 1 for headings, 2 for status bar, etc.).
+    Use attron(COLOR_PAIR(n)|A_BOLD) to emphasize headings; attroff for cleanup.
+    Don’t rely on a specific terminal’s palette unless you guard with has_colors() and can_change_color() checks.
+    Use chgat() to post-process regions (e.g., to highlight the current selection without reprinting content).
+
+Input Handling: Best Practices
+
+    Always enable keypad(win, TRUE) on any window that takes input to map special keys reliably.
+    Use cbreak + noecho for interactive UIs so you decide what to show and when.
+    For time-sensitive updates, halfdelay() provides a simple timeout. Map ERR returns to “no input” and continue your animation or status update.
+
+Mouse: Best Practices
+
+    mousemask: request only the events you actually need (e.g., REPORT_MOUSE_POSITION can be noisy).
+    Always check for KEY_MOUSE from getch() before calling getmouse.
+    Convert MEVENT coordinates to the appropriate window-relative coordinates when using subwindows/panels.
+
+Windows, Panels, and Redraw Discipline
+
+    Without panels: Windows can overlap but you must manage redraw order by hand. With panels: update_panels() manages stacking; follow with doupdate() for efficient screen updates.
+    For animations and complex UIs, prefer panels to simplify layering.
+    When moving windows: move_panel instead of destroying/recreating windows to preserve content and stack order.
+
+Menus: Patterns
+
+    Create items → create menu → set windows/subwindows → post → event loop with menu_driver.
+    Use set_menu_format for multi-column grids; use options to control row-major vs column-major, show descriptions, and more.
+    Use item user pointers to map selections directly to actions.
+
+Forms: Patterns
+
+    Create fields → configure attributes/options → create form → set windows/subwindows → post → event loop with form_driver.
+    Set field types for validation (alphabetic, integer, etc.) to enforce correct input when leaving a field.
+    Use additional buffers for labels or field backgrounds.
+
+Dumping/Restoring State
+
+    scr_dump/scr_restore for whole-screen persistence.
+    putwin/getwin for window-specific persistence.
+    Use these tools to implement session restore or “screenshots” of UI state to files.
+
+ACS Line Drawing
+
+    Use ACS_HLINE/ACS_VLINE for horizontal/vertical lines; corners (ACS_ULCORNER, etc.) for frames.
+    Combine with box/wborder for reliable terminal-agnostic borders.
+
+Temporarily Leaving Curses
+
+    Use def_prog_mode()/endwin() before executing external commands; resume with reset_prog_mode() and refresh.
+    This keeps terminal sane and prevents broken output after returning from shell commands.
+
+Error Handling and Portability Notes (from HOWTO guidance)
+
+    Always check for terminal capabilities (e.g., has_colors()) before using features that may not be supported.
+    Handle ERR returns from functions like getch() (e.g., with halfdelay timeouts).
+    Avoid mixing curses-managed output with direct stdio printing while in curses mode.
+
+Library Linking Summary
+
+    Core: -lncurses
+    Panels: -lpanel
+    Menus: -lmenu
+    Forms: -lform
+    Combine as needed, e.g., gcc app.c -o app -lform -lmenu -lpanel -lncurses
+
+Frequently Used API Families (selected)
+
+    Initialization: initscr, endwin, cbreak, nocbreak, raw, noraw, echo, noecho, keypad, halfdelay
+    Output: addch/waddch/mvaddch/mvwaddch, addstr/waddstr, printw/wprintw/mvprintw/mvwprintw, refresh/wrefresh
+    Input: getch/wgetch/mvgetch/mvwgetch, scanw/wscanw, getstr/wgetstr
+    Attributes: attron/attroff/attrset, wattron/wattroff/wattrset, attr_get/wattr_get, chgat/wchgat/mvchgat/mvwchgat
+    Windows: newwin, delwin, wborder/box, wmove, getyx/getbegyx/getmaxyx
+    Colors: start_color, has_colors, init_pair, COLOR_PAIR, init_color, color_content
+    Keyboard: KEY_* constants via keypad()
+    Mouse: mousemask, getmouse, MEVENT, KEY_MOUSE, bstate flags
+    Screen/Window dump: scr_dump, scr_restore, putwin, getwin
+    Cursor/mode: curs_set, def_prog_mode, reset_prog_mode
+    Panels: new_panel, show_panel, hide_panel, top_panel, bottom_panel, move_panel, replace_panel, panel_above, panel_below, set_panel_userptr, update_panels, doupdate
+    Menus: new_item, free_item, new_menu, free_menu, set_menu_items, post_menu, unpost_menu, set_menu_win, set_menu_sub, set_menu_format, menu_opts_on/off, menu_driver, set_item_userptr
+    Forms: new_field, free_field, new_form, free_form, set_form_win, set_form_sub, set_field_buffer, set_field_type, field options, form_driver
+
+Design Tips (aligned with HOWTO guidance)
+
+    Keep drawing and input separate: Update your model, then redraw affected windows, then wrefresh in a consistent order (or use panels + update_panels + doupdate).
+    Group color/attribute decisions centrally: Define your color pairs in one place and give them semantic names in your code for maintainability.
+    Use windows to isolate concerns: A dedicated log window, menu window, status window, and content window make code and refresh logic clearer.
+    Prefer keypad and cbreak/noecho for predictable input handling; only use raw when you must intercept all control characters.
+    For complex overlap, switch to panels early rather than reinventing stacking logic.
+
+Final Notes
+
+    The HOWTO includes revision notes indicating the license alignment with ncurses (MIT-style license used by ncurses) and that examples were re-licensed accordingly. It also notes added Perl examples, updated references, and sections like ACS variables.
+    For complete code listings, per-section examples, and detailed step-by-step walkthroughs, refer to the HOWTO’s individual section pages. This manual consolidates and organizes the concepts and APIs covered there so you can implement them quickly in your own programs.
+
+Summary of Key Points
+
+    Initialize with initscr; exit cleanly with endwin.
+    Use cbreak + noecho + keypad(TRUE) as a standard interactive baseline.
+    Draw to windows with addch/addstr/printw; refresh to paint.
+    Manage visual style via attributes and colors (start_color, init_pair, COLOR_PAIR).
+    Use panels for overlapping windows; update_panels + doupdate to apply changes.
+    Menus/forms are driven by menu_driver/form_driver; set windows/subwindows for clean layouts.
+    Handle special keys via KEY_* and mouse via KEY_MOUSE + getmouse.
+    Save/restore screen or window state with scr_dump/putwin families.
+    Use ACS_* for portable borders and line drawing.
